@@ -1,0 +1,168 @@
+/// @ 0.16.0
+### {
+  name: "ノートについたリアクションの詳細を閲覧するプラグイン"
+  version: "0.0.0"
+  author: "はとぽぷ(@hatopop_vr@misskey.io)"
+  description: "ノートについたリアクションの詳細を閲覧"
+  permissions: ["read:reactions"]
+}
+
+// SeverNameの取得
+let SERVER_NAME = Mk:url().split('/')[2]
+
+// リアクションから不要な文字を除去１ リアクションを取得
+@removeChar(reaction) {
+    return reaction.replace(`@.`, ``)
+}
+
+// リアクションから不要な文字を除去２ 名称を取得
+@removeChar2(reaction) {
+    return reaction.replace(`:` ``)
+}
+
+// indexに基づいてソート
+@sortByIndices(sortedIndices, targetList) {
+    let sortedList = []
+    each (let i sortedIndices) {
+        sortedList.push(targetList[i])
+    }
+    sortedList
+}
+
+// ソート処理
+@sortReactionByCount(reactionList, countList) {
+    let sortedIndices = []
+    for (let i, countList.len) {
+        sortedIndices.push(i)
+    }
+
+    sortedIndices.sort(@(a, b) {
+        return countList[b] - countList[a]
+    })
+
+    let sortedReactionList = sortByIndices(sortedIndices, reactionList)
+    let sortedCountList = sortByIndices(sortedIndices, countList)
+
+    let sortedObj = {}
+    Obj:set(sortedObj, "sortedReactionList", sortedReactionList)
+    Obj:set(sortedObj, "sortedCountList", sortedCountList)
+    sortedObj
+}
+
+// APIからノートのリアクションを取得
+@getReactions(note_id, limit, requestMaxCount) {
+    let resultList = []
+    var result = Mk:api(`notes/reactions` {noteId: note_id, limit: limit})
+
+    each (let res result){
+        resultList.push(res)
+    }
+
+    var until_id = result[result.len - 1].id
+    var count = 1
+
+    loop {
+        if count == requestMaxCount break
+
+        var payload = {noteId: note_id, limit: limit, untilId: until_id}
+
+        result = Mk:api(`notes/reactions` payload)
+        if (result.len == 0) break
+
+        each (let res result){
+            resultList.push(res)
+        }
+
+        until_id = result[result.len - 1].id
+        count = count + 1
+    }
+
+    resultList
+}
+
+// メイン処理
+@misskeyNoteReationViewer(note, mode) {
+
+    // リアクションの取得
+    let reactionsList = getReactions(note.id, 100, 100)
+
+    // リアクションの集計
+    let userIdList = []
+    let reactionList = []
+    let reactionCount = {}
+
+    each (let reactionSet reactionsList) {
+        var reaction = removeChar(reactionSet.type)
+        var userHost = reactionSet.user.host
+        var user = `@{reactionSet.user.username}`
+
+        // リモートユーザー対応
+        if (userHost == null) {
+            user = `@{reactionSet.user.username}`
+        } else {
+            user = `@{reactionSet.user.username}@{userHost}`
+        }
+
+        // reactionのリストの追加
+        if (!reactionList.incl(reaction)) {
+            reactionList.push(reaction)
+        }
+
+        // reactionCountにreactionがなければ初期化
+        if (Obj:has(reactionCount, reaction) == false) {
+            Obj:set(reactionCount, reaction, { users: [] })
+        }
+
+        let reactionUsers = Obj:get(Obj:get(reactionCount, reaction), 'users')
+
+        reactionUsers.push(user)
+    }
+
+    // countListに各リアクション数(ユーザー数)の追加
+    let countList = []
+    each (let reaction reactionList) {
+        let reactionUsers = Obj:get(Obj:get(reactionCount, reaction), 'users')
+        countList.push(reactionUsers.len)
+    }
+
+    // リアクション数順にソートしたオブジェクト
+    let sortedObj = sortReactionByCount(reactionList, countList)
+    let sortedReactionList = Obj:get(sortedObj, "sortedReactionList")
+
+    // ダイアログと投稿用テキストの作成
+    let dialogTextList = []
+    // 最終的なダイアログテキスト
+    var dialogText = ""
+
+    each (let reaction sortedReactionList) {
+        let reactionName = removeChar2(reaction)
+        let reactionUsers = Obj:get(Obj:get(reactionCount, reaction), 'users')
+        let dialogUserReactions = reactionUsers.join(" ")
+
+        if (mode == "detail") {
+            dialogTextList.push(`{reaction} {reactionUsers.len} {dialogUserReactions}`)
+        } elif (mode == "simple") {
+            dialogTextList.push(`{reaction} {reactionUsers.len}`)
+        } elif (mode == "only") {
+            dialogTextList.push(`{reaction}`)
+        }
+    }
+
+    // 最終的なダイアログテキスト
+    if (mode == "detail") {
+        dialogText = dialogTextList.join(Str:lf)
+        Mk:dialog(`リアクションの詳細` dialogText)
+    } elif (mode == "simple") {
+        dialogText = dialogTextList.join(",")
+        Mk:dialog(`リアクション数` dialogText)
+    } elif (mode == "only") {
+        dialogText = dialogTextList.join(" ")
+        Mk:dialog(`リアクション一覧` dialogText)
+    }
+
+}
+
+// 第二引数はtrueの場合、リアクションの抽出を行う
+Plugin:register_note_action(`リアクション詳細` @(note) {misskeyNoteReationViewer(note, "detail")})
+// Plugin:register_note_action(`リアクション数` @(note) {misskeyNoteReationViewer(note, "simple")})
+Plugin:register_note_action(`リアクション抽出` @(note) {misskeyNoteReationViewer(note, "only")})
