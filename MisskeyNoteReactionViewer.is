@@ -1,7 +1,7 @@
 /// @ 0.16.0
 ### {
   name: "ノートについたリアクションの詳細を閲覧するプラグイン"
-  version: "0.0.0"
+  version: "0.1.0"
   author: "はとぽぷ(@hatopop_vr@misskey.io)"
   description: "ノートについたリアクションの詳細を閲覧"
   permissions: ["read:reactions"]
@@ -50,7 +50,7 @@ let SERVER_NAME = Mk:url().split('/')[2]
 }
 
 // APIからノートのリアクションを取得
-@getReactions(note_id, limit, requestMaxCount) {
+@getNoteReactions(note_id, limit, requestMaxCount) {
     let resultList = []
     var result = Mk:api(`notes/reactions` {noteId: note_id, limit: limit})
 
@@ -81,13 +81,11 @@ let SERVER_NAME = Mk:url().split('/')[2]
 }
 
 // メイン処理
-@misskeyNoteReationViewer(note, mode) {
-
+@misskeyNoteReationViewer(note) {
     // リアクションの取得
-    let reactionsList = getReactions(note.id, 100, 100)
+    let reactionsList = getNoteReactions(note.id, 100, 100)
 
     // リアクションの集計
-    let userIdList = []
     let reactionList = []
     let reactionCount = {}
 
@@ -114,7 +112,6 @@ let SERVER_NAME = Mk:url().split('/')[2]
         }
 
         let reactionUsers = Obj:get(Obj:get(reactionCount, reaction), 'users')
-
         reactionUsers.push(user)
     }
 
@@ -131,38 +128,28 @@ let SERVER_NAME = Mk:url().split('/')[2]
 
     // ダイアログと投稿用テキストの作成
     let dialogTextList = []
-    // 最終的なダイアログテキスト
-    var dialogText = ""
+    // ダイアログと投稿用テキストの作成
+    let dialogTextList2 = []
 
     each (let reaction sortedReactionList) {
         let reactionName = removeChar2(reaction)
         let reactionUsers = Obj:get(Obj:get(reactionCount, reaction), 'users')
         let dialogUserReactions = reactionUsers.join(" ")
 
-        if (mode == "detail") {
-            dialogTextList.push(`{reaction} {reactionUsers.len} {dialogUserReactions}`)
-        } elif (mode == "simple") {
-            dialogTextList.push(`{reaction} {reactionUsers.len}`)
-        } elif (mode == "only") {
+        if (!(reaction).incl("@")) {
             dialogTextList.push(`{reaction}`)
         }
+        dialogTextList2.push(`{reaction} {reactionUsers.len} {dialogUserReactions}`)
+
     }
 
     // 最終的なダイアログテキスト
-    if (mode == "detail") {
-        dialogText = dialogTextList.join(Str:lf)
-        Mk:dialog(`リアクションの詳細` dialogText)
-    } elif (mode == "simple") {
-        dialogText = dialogTextList.join(",")
-        Mk:dialog(`リアクション数` dialogText)
-    } elif (mode == "only") {
-        dialogText = dialogTextList.join(" ")
-        Mk:dialog(`リアクション一覧` dialogText)
-    }
+    var dialogText1 = dialogTextList.join(" ")
+    var dialogText2 = dialogTextList2.join(Str:lf)
+    var dialogTextMerged = `{dialogText1}{Str:lf}{Str:lf}**リアションの詳細**{Str:lf}{dialogText2}`
 
+    Mk:dialog(`リアクション抜粋(ローカル)` dialogTextMerged)
 }
 
-// 第二引数はtrueの場合、リアクションの抽出を行う
-Plugin:register_note_action(`リアクション詳細` @(note) {misskeyNoteReationViewer(note, "detail")})
-// Plugin:register_note_action(`リアクション数` @(note) {misskeyNoteReationViewer(note, "simple")})
-Plugin:register_note_action(`リアクション抽出` @(note) {misskeyNoteReationViewer(note, "only")})
+// リアクションの詳細を取得するボタンの登録
+Plugin:register_note_action(`リアクション詳細` @(note) {misskeyNoteReationViewer(note)})
