@@ -1,9 +1,9 @@
 /// @ 0.16.0
 ### {
-  name: "ノートについたリアクションの詳細を閲覧するプラグイン"
-  version: "0.1.0"
+  name: "ノートについたリアクション・リノートの詳細を閲覧するプラグイン"
+  version: "0.2.0"
   author: "はとぽぷ(@hatopop_vr@misskey.io)"
-  description: "ノートについたリアクションの詳細を閲覧"
+  description: "ノートについたリアクション・リノートの詳細を閲覧"
   permissions: ["read:reactions"]
 }
 
@@ -30,7 +30,7 @@ let SERVER_NAME = Mk:url().split('/')[2]
 }
 
 // ソート処理
-@sortReactionByCount(reactionList, countList) {
+@sortTargetByCount(targetList, countList) {
     let sortedIndices = []
     for (let i, countList.len) {
         sortedIndices.push(i)
@@ -40,19 +40,22 @@ let SERVER_NAME = Mk:url().split('/')[2]
         return countList[b] - countList[a]
     })
 
-    let sortedReactionList = sortByIndices(sortedIndices, reactionList)
+    let sortedTargetList = sortByIndices(sortedIndices, targetList)
     let sortedCountList = sortByIndices(sortedIndices, countList)
 
     let sortedObj = {}
-    Obj:set(sortedObj, "sortedReactionList", sortedReactionList)
+    Obj:set(sortedObj, "sortedTargetList", sortedTargetList)
     Obj:set(sortedObj, "sortedCountList", sortedCountList)
     sortedObj
 }
+
 
 // APIからノートのリアクションを取得
 @getNoteReactions(note_id, limit, requestMaxCount) {
     let resultList = []
     var result = Mk:api(`notes/reactions` {noteId: note_id, limit: limit})
+
+    if (result.len == 0) return resultList
 
     each (let res result){
         resultList.push(res)
@@ -80,16 +83,46 @@ let SERVER_NAME = Mk:url().split('/')[2]
     resultList
 }
 
-// メイン処理
-@misskeyNoteReationViewer(note) {
-    // リアクションの取得
-    let reactionsList = getNoteReactions(note.id, 100, 100)
+// APIからノートのリノートを取得
+@getNoteRenotes(note_id, limit, requestMaxCount) {
+    let resultList = []
+    var result = Mk:api(`notes/renotes` {noteId: note_id, limit: limit})
 
+    if (result.len == 0) return resultList
+
+    each (let res result){
+        resultList.push(res)
+    }
+
+    var until_id = result[result.len - 1].id
+    var count = 1
+
+    loop {
+        if count == requestMaxCount break
+
+        var payload = {noteId: note_id, limit: limit, untilId: until_id}
+
+        result = Mk:api(`notes/renotes` payload)
+        if (result.len == 0) break
+
+        each (let res result){
+            resultList.push(res)
+        }
+
+        until_id = result[result.len - 1].id
+        count = count + 1
+    }
+
+    resultList
+}
+
+// リアクションを集計
+@aggregateNoteReactions(reactions) {
     // リアクションの集計
     let reactionList = []
     let reactionCount = {}
 
-    each (let reactionSet reactionsList) {
+    each (let reactionSet reactions) {
         var reaction = removeChar(reactionSet.type)
         var userHost = reactionSet.user.host
         var user = `@{reactionSet.user.username}`
@@ -122,33 +155,157 @@ let SERVER_NAME = Mk:url().split('/')[2]
         countList.push(reactionUsers.len)
     }
 
-    // リアクション数順にソートしたオブジェクト
-    let sortedObj = sortReactionByCount(reactionList, countList)
-    let sortedReactionList = Obj:get(sortedObj, "sortedReactionList")
+    let resultObj = {}
+    Obj:set(resultObj, "reactionCount", reactionCount)
+    Obj:set(resultObj, "reactionList", reactionList)
+    Obj:set(resultObj, "countList", countList)
+    resultObj
+}
 
-    // ダイアログと投稿用テキストの作成
-    let dialogTextList = []
-    // ダイアログと投稿用テキストの作成
-    let dialogTextList2 = []
+// リノートを集計
+@aggregateNoteRenotes(renotes) {
+    // ユーザーとリノートを保存するためのオブジェクト
+    let userRenoteCount = {}
+    let userList = []
 
-    each (let reaction sortedReactionList) {
-        let reactionName = removeChar2(reaction)
-        let reactionUsers = Obj:get(Obj:get(reactionCount, reaction), 'users')
-        let dialogUserReactions = reactionUsers.join(" ")
+    each (let renoteSet renotes) {
+        var renote = `:rn:`
+        var userHost = renoteSet.user.host
+        var user = `@{renoteSet.user.username}`
 
-        if (!(reaction).incl("@")) {
-            dialogTextList.push(`{reaction}`)
+        // リモートユーザー対応
+        if (userHost == null) {
+            user = `@{renoteSet.user.username}`
+        } else {
+            user = `@{renoteSet.user.username}@{userHost}`
         }
-        dialogTextList2.push(`{reaction} {reactionUsers.len} {dialogUserReactions}`)
+
+        // userのリストの追加
+        if (!userList.incl(user)) {
+            userList.push(user)
+        }
+
+        // userRenoteCountにuserがなければ初期化
+        if (Obj:has(userRenoteCount, user) == false) {
+            Obj:set(userRenoteCount, user, { renotes: [] })
+        }
+
+        let userRenotes = Obj:get(Obj:get(userRenoteCount, user), 'renotes')
+
+        // リアクションをユーザーに追加
+        userRenotes.push(renote)
 
     }
 
-    // 最終的なダイアログテキスト
-    var dialogText1 = dialogTextList.join(" ")
-    var dialogText2 = dialogTextList2.join(Str:lf)
-    var dialogTextMerged = `{dialogText1}{Str:lf}{Str:lf}**リアションの詳細**{Str:lf}{dialogText2}`
+    // countListに各リノート数の追加
+    let countList = []
+    each (let user userList){
+        let userRenotes = Obj:get(Obj:get(userRenoteCount, user), 'renotes')
+        countList.push(userRenotes.len)
+    }
 
-    Mk:dialog(`リアクション抜粋(ローカル)` dialogTextMerged)
+    let resultObj = {}
+    Obj:set(resultObj, "userRenoteCount", userRenoteCount)
+    Obj:set(resultObj, "userList", userList)
+    Obj:set(resultObj, "countList", countList)
+    resultObj
+}
+
+// メイン処理
+@misskeyNoteReationViewer(note) {
+    // ダイアログのリアクション概要テキスト
+    let dialogHeaderTextList = []
+    // ダイアログのリアクション詳細テキスト
+    let dialogReactionTextList = []
+    // ダイアログのリノートテキストの作成
+    let dialogRenoteTextList = []
+
+    // リアクションの取得
+    let reactions = getNoteReactions(note.id, 100, 100)
+
+    if (reactions.len > 0) {
+        // リアクションの集計
+        let reactionObj = aggregateNoteReactions(reactions)
+        let reactionCount = Obj:get(reactionObj, "reactionCount")
+        let reactionList = Obj:get(reactionObj, "reactionList")
+        let countList = Obj:get(reactionObj, "countList")
+
+        // リアクション数順にソートしたオブジェクト
+        let sortedReactionObj = sortTargetByCount(reactionList, countList)
+        let sortedReactionList = Obj:get(sortedReactionObj, "sortedTargetList")
+
+        each (let reaction sortedReactionList) {
+            let reactionUsers = Obj:get(Obj:get(reactionCount, reaction), 'users')
+            let dialogUserReactions = reactionUsers.join(" ")
+
+            if (!(reaction).incl("@")) {
+                dialogHeaderTextList.push(`{reaction}`)
+            }
+            dialogReactionTextList.push(`{reaction} {reactionUsers.len} {dialogUserReactions}`)
+        }
+    }
+
+    // リノートの取得
+    let renotes = getNoteRenotes(note.id, 100, 100)
+    var userCount = 0
+
+    if (renotes.len > 0) {
+        // リノートの集計
+        let renoteObj = aggregateNoteRenotes(renotes)
+        let userRenoteCount = Obj:get(renoteObj, "userRenoteCount")
+        let userList = Obj:get(renoteObj, "userList")
+        let renoteCountList = Obj:get(renoteObj, "countList")
+        userCount = userList.len
+
+        // リノート数順にソートしたオブジェクト
+        let sortedRenoteObj = sortTargetByCount(userList, renoteCountList)
+        let sortedRenoteUserList = Obj:get(sortedRenoteObj, "sortedTargetList")
+
+        // renoteのリストの追加
+        each (let renoteUser sortedRenoteUserList) {
+            let userRenotes = Obj:get(Obj:get(userRenoteCount, renoteUser), 'renotes')
+            let renoteCount = userRenotes.len
+            if (renoteCount > 1) {
+                dialogRenoteTextList.push(`{renoteUser} {renoteCount}`)
+            } else {
+                dialogRenoteTextList.push(`{renoteUser}`)
+            }
+        }
+    }
+
+    // 最終的なダイアログテキスト
+    var dialogHeaderText = dialogHeaderTextList.join(" ")
+    var dialogReactionText = dialogReactionTextList.join(Str:lf)
+    var dialogRenoteText = dialogRenoteTextList.join(" ")
+    let dialogTextMergedList = []
+
+    if (reactions.len > 0) {
+        // reactionのリストの追加
+        dialogTextMergedList.push(`**リアクション抜粋(ローカル)**`)
+        dialogTextMergedList.push(dialogHeaderText)
+        dialogTextMergedList.push("")
+    }
+
+    if (renotes.len > 0) {
+        dialogTextMergedList.push(`**リノート詳細: {userCount}({renotes.len})**`)
+        dialogTextMergedList.push(dialogRenoteText)
+        dialogTextMergedList.push("")
+    }
+
+    if (reactions.len > 0) {
+        // reactionのリストの追加
+        dialogTextMergedList.push(`**リアクション詳細: {reactions.len}**`)
+        dialogTextMergedList.push(dialogReactionText)
+        dialogTextMergedList.push("")
+    }
+
+    if (dialogTextMergedList.len == 0) {
+        dialogTextMergedList.push(`**リアクション・リノートがありません**`)
+    }
+
+    var dialogTextMerged = dialogTextMergedList.join(Str:lf)
+
+    Mk:dialog(`取得結果` dialogTextMerged)
 }
 
 // リアクションの詳細を取得するボタンの登録
