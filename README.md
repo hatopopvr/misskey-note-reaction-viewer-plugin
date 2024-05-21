@@ -1,12 +1,12 @@
 # misskey-note-reaction-viewer-plugin
-特定のノートにリアクション・リノートをつけたユーザーの一覧を簡易に表示するMisskeyプラグインです。
+特定のノートにリアクション・リノートをつけたユーザー・ホストの一覧を簡易に表示するMisskeyプラグインです。
 [AiScript](https://github.com/syuilo/aiscript/tree/master)によって記述されています。
 
 ## 使い方
 
 - 該当のノートの`･･･`メニューからプラグインボタン`リアクション詳細`を選択すると、リアクション・リノートを取得し、ダイアログウインドウで表示します。
 
-![image](images/image_001.jpg)
+![image](images/image_001.png)
 
 ## 導入
 
