@@ -1,14 +1,30 @@
-/// @ 0.16.0
+/// @ 0.18.0
 ### {
   name: "ノートについたリアクション・リノートの詳細を閲覧するプラグイン"
-  version: "0.2.0"
+  version: "0.3.0"
   author: "はとぽぷ(@hatopop_vr@misskey.io)"
   description: "ノートについたリアクション・リノートの詳細を閲覧"
   permissions: ["read:reactions"]
 }
 
-// SeverNameの取得
+// ServerNameの取得
 let SERVER_NAME = Mk:url().split('/')[2]
+
+// 日時をフォーマットして取得する関数
+@getCurrentDateTime() {
+    return `{Date:year()}-{Date:month()}-{Date:day()} {Date:hour()}:{Date:minute()}:{Date:second()}.{Math:floor(Date:now()%1000/100)}`
+}
+
+// ログ出力関数を定義
+@logInfo(message) {
+    let dateTime = getCurrentDateTime()
+    print(`{dateTime} - INFO - {message}`)
+}
+
+@logError(message) {
+    let dateTime = getCurrentDateTime()
+    print(`{dateTime} - ERROR - {message}`)
+}
 
 // リアクションから不要な文字を除去１ リアクションを取得
 @removeChar(reaction) {
@@ -17,7 +33,7 @@ let SERVER_NAME = Mk:url().split('/')[2]
 
 // リアクションから不要な文字を除去２ 名称を取得
 @removeChar2(reaction) {
-    return reaction.replace(`:` ``)
+    return reaction.replace(`:`, ``)
 }
 
 // indexに基づいてソート
@@ -49,13 +65,16 @@ let SERVER_NAME = Mk:url().split('/')[2]
     sortedObj
 }
 
-
 // APIからノートのリアクションを取得
 @getNoteReactions(note_id, limit, requestMaxCount) {
     let resultList = []
+    logInfo(`Fetching reactions for note ID {note_id} with limit {limit} and max count {requestMaxCount}`)
     var result = Mk:api(`notes/reactions` {noteId: note_id, limit: limit})
 
-    if (result.len == 0) return resultList
+    if (result.len == 0) {
+        logInfo(`No reactions found for note ID {note_id}`)
+        return resultList
+    }
 
     each (let res result){
         resultList.push(res)
@@ -80,15 +99,20 @@ let SERVER_NAME = Mk:url().split('/')[2]
         count = count + 1
     }
 
+    logInfo(`Fetched {resultList.len} reactions for note ID {note_id}`)
     resultList
 }
 
 // APIからノートのリノートを取得
 @getNoteRenotes(note_id, limit, requestMaxCount) {
     let resultList = []
+    logInfo(`Fetching renotes for note ID {note_id} with limit {limit} and max count {requestMaxCount}`)
     var result = Mk:api(`notes/renotes` {noteId: note_id, limit: limit})
 
-    if (result.len == 0) return resultList
+    if (result.len == 0) {
+        logInfo(`No renotes found for note ID {note_id}`)
+        return resultList
+    }
 
     each (let res result){
         resultList.push(res)
@@ -113,11 +137,13 @@ let SERVER_NAME = Mk:url().split('/')[2]
         count = count + 1
     }
 
+    logInfo(`Fetched {resultList.len} renotes for note ID {note_id}`)
     resultList
 }
 
 // リアクションを集計
 @aggregateNoteReactions(reactions) {
+    logInfo(`Aggregating reactions`)
     // リアクションの集計
     let reactionList = []
     let reactionCount = {}
@@ -155,11 +181,68 @@ let SERVER_NAME = Mk:url().split('/')[2]
         countList.push(reactionUsers.len)
     }
 
+    logInfo(`Aggregated {reactionList.len} unique reactions`)
     let resultObj = {}
     Obj:set(resultObj, "reactionCount", reactionCount)
     Obj:set(resultObj, "reactionList", reactionList)
     Obj:set(resultObj, "countList", countList)
     resultObj
+}
+
+@sortHostCountsDescending(hostCounts) {
+    let sortedHosts = Obj:keys(hostCounts)
+    sortedHosts.sort(@(a, b) {
+        return Obj:get(hostCounts, b) - Obj:get(hostCounts, a)
+    })
+    sortedHosts
+}
+
+@aggregateNoteReactionsByHost(reactions) {
+    let reactionHostCount = {}
+
+    each (let reactionSet reactions) {
+        var userHost = reactionSet.user.host //  || "local"
+
+        if (userHost == null) {
+            userHost = `[{SERVER_NAME}](https://{SERVER_NAME})`
+        } else {
+            userHost = `[{reactionSet.user.host}](https://{reactionSet.user.host})`
+        }
+
+        // reactionHostCountにホストがなければ初期化
+        if (Obj:has(reactionHostCount, userHost) == false) {
+            Obj:set(reactionHostCount, userHost, 0)
+        }
+
+        let reactionCount = Obj:get(reactionHostCount, userHost)
+        Obj:set(reactionHostCount, userHost, reactionCount + 1)
+    }
+
+    reactionHostCount
+}
+
+@aggregateNoteRenotesByHost(renotes) {
+    let renoteHostCount = {}
+
+    each (let renoteSet renotes) {
+        var userHost = renoteSet.user.host
+
+        if (userHost == null) {
+            userHost = `[{SERVER_NAME}](https://{SERVER_NAME})`
+        } else {
+            userHost = `[{renoteSet.user.host}](https://{renoteSet.user.host})`
+        }
+
+        // renoteHostCountにホストがなければ初期化
+        if (Obj:has(renoteHostCount, userHost) == false) {
+            Obj:set(renoteHostCount, userHost, 0)
+        }
+
+        let renoteCount = Obj:get(renoteHostCount, userHost)
+        Obj:set(renoteHostCount, userHost, renoteCount + 1)
+    }
+
+    renoteHostCount
 }
 
 // リノートを集計
@@ -211,24 +294,46 @@ let SERVER_NAME = Mk:url().split('/')[2]
     resultObj
 }
 
-// メイン処理
 @misskeyNoteReationViewer(note) {
+    logInfo(`Viewing reactions and renotes for note ID {note.id}`)
     // ダイアログのリアクション概要テキスト
     let dialogHeaderTextList = []
     // ダイアログのリアクション詳細テキスト
     let dialogReactionTextList = []
     // ダイアログのリノートテキストの作成
     let dialogRenoteTextList = []
-
+    // ダイアログのホスト別リアクションテキスト
+    let dialogHostReactionTextList = []
+    // ダイアログのホスト別リノートテキスト
+    let dialogHostRenoteTextList = []
     // リアクションの取得
     let reactions = getNoteReactions(note.id, 100, 100)
+    var hostReactionCount = 0
 
     if (reactions.len > 0) {
+        logInfo(`Found {reactions.len} reactions`)
         // リアクションの集計
         let reactionObj = aggregateNoteReactions(reactions)
         let reactionCount = Obj:get(reactionObj, "reactionCount")
         let reactionList = Obj:get(reactionObj, "reactionList")
         let countList = Obj:get(reactionObj, "countList")
+
+        // ホスト別リアクションの集計
+        let hostReactionObj = aggregateNoteReactionsByHost(reactions)
+        // ホスト別リアクションの降順ソート
+        let sortedHostReactions = sortHostCountsDescending(hostReactionObj)
+        // ホスト別リアクションの件数の追加
+        hostReactionCount = sortedHostReactions.len
+
+        // ホスト別リアクションの集計結果の追加
+        each (let host sortedHostReactions) {
+            let count = Obj:get(hostReactionObj, host)
+            if (count > 1) {
+                dialogHostReactionTextList.push(`**{host}** {count}`)
+            } else {
+                dialogHostReactionTextList.push(`**{host}**`)
+            }
+        }
 
         // リアクション数順にソートしたオブジェクト
         let sortedReactionObj = sortTargetByCount(reactionList, countList)
@@ -243,19 +348,38 @@ let SERVER_NAME = Mk:url().split('/')[2]
             }
             dialogReactionTextList.push(`{reaction} {reactionUsers.len} {dialogUserReactions}`)
         }
+    } else {
+        logInfo(`No reactions found`)
     }
 
     // リノートの取得
     let renotes = getNoteRenotes(note.id, 100, 100)
     var userCount = 0
+    var hostRenoteCount = 0
 
     if (renotes.len > 0) {
+        logInfo(`Found {renotes.len} renotes`)
         // リノートの集計
         let renoteObj = aggregateNoteRenotes(renotes)
         let userRenoteCount = Obj:get(renoteObj, "userRenoteCount")
         let userList = Obj:get(renoteObj, "userList")
         let renoteCountList = Obj:get(renoteObj, "countList")
         userCount = userList.len
+
+        // ホスト別リノートの集計
+        let hostRenoteObj = aggregateNoteRenotesByHost(renotes)
+        // ホスト別リノートの降順ソート
+        let sortedHostRenotes = sortHostCountsDescending(hostRenoteObj)
+        hostRenoteCount = sortedHostRenotes.len
+        // ホスト別リノートの件数の追加
+        each (let host sortedHostRenotes) {
+            let count = Obj:get(hostRenoteObj, host)
+            if (count > 1) {
+                dialogHostRenoteTextList.push(`**{host}** {count}`)
+            } else {
+                dialogHostRenoteTextList.push(`**{host}**`)
+            }
+        }
 
         // リノート数順にソートしたオブジェクト
         let sortedRenoteObj = sortTargetByCount(userList, renoteCountList)
@@ -271,31 +395,50 @@ let SERVER_NAME = Mk:url().split('/')[2]
                 dialogRenoteTextList.push(`{renoteUser}`)
             }
         }
+    } else {
+        logInfo(`No renotes found`)
     }
 
     // 最終的なダイアログテキスト
     var dialogHeaderText = dialogHeaderTextList.join(" ")
     var dialogReactionText = dialogReactionTextList.join(Str:lf)
     var dialogRenoteText = dialogRenoteTextList.join(" ")
+    var dialogHostReactionText = dialogHostReactionTextList.join(" ")
+    var dialogHostRenoteText = dialogHostRenoteTextList.join(" ")
     let dialogTextMergedList = []
 
     if (reactions.len > 0) {
-        // reactionのリストの追加
+        // reactionのサマリの追加
         dialogTextMergedList.push(`**リアクション抜粋(ローカル)**`)
         dialogTextMergedList.push(dialogHeaderText)
         dialogTextMergedList.push("")
     }
 
     if (renotes.len > 0) {
+        // renoteの詳細の追加
         dialogTextMergedList.push(`**リノート詳細: {userCount}({renotes.len})**`)
         dialogTextMergedList.push(dialogRenoteText)
         dialogTextMergedList.push("")
     }
 
     if (reactions.len > 0) {
-        // reactionのリストの追加
+        // reactionの詳細の追加
         dialogTextMergedList.push(`**リアクション詳細: {reactions.len}**`)
         dialogTextMergedList.push(dialogReactionText)
+        dialogTextMergedList.push("")
+    }
+
+    if (dialogHostRenoteTextList.len > 0) {
+        // ホスト別リノートの集計の追加
+        dialogTextMergedList.push(`**ホスト別リノート集計: {hostRenoteCount}({renotes.len})**`)
+        dialogTextMergedList.push(dialogHostRenoteText)
+        dialogTextMergedList.push("")
+    }
+
+    if (dialogHostReactionTextList.len > 0) {
+        // ホスト別リアクションの集計の追加
+        dialogTextMergedList.push(`**ホスト別リアクション集計: {hostReactionCount}({reactions.len})**`)
+        dialogTextMergedList.push(dialogHostReactionText)
         dialogTextMergedList.push("")
     }
 
@@ -305,8 +448,10 @@ let SERVER_NAME = Mk:url().split('/')[2]
 
     var dialogTextMerged = dialogTextMergedList.join(Str:lf)
 
+    logInfo(`Displaying dialog for note ID {note.id}`)
     Mk:dialog(`取得結果` dialogTextMerged)
 }
+
 
 // リアクションの詳細を取得するボタンの登録
 Plugin:register_note_action(`リアクション詳細` @(note) {misskeyNoteReationViewer(note)})
