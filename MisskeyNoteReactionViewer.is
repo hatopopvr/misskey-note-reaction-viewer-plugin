@@ -198,6 +198,7 @@ let SERVER_NAME = Mk:url().split('/')[2]
 }
 
 @aggregateNoteReactionsByHost(reactions) {
+    logInfo("Aggregating reactions by host")
     let reactionHostCount = {}
 
     each (let reactionSet reactions) {
@@ -218,10 +219,12 @@ let SERVER_NAME = Mk:url().split('/')[2]
         Obj:set(reactionHostCount, userHost, reactionCount + 1)
     }
 
+    logInfo("Completed aggregating reactions by host")
     reactionHostCount
 }
 
 @aggregateNoteRenotesByHost(renotes) {
+    logInfo("Aggregating renotes by host")
     let renoteHostCount = {}
 
     each (let renoteSet renotes) {
@@ -242,11 +245,13 @@ let SERVER_NAME = Mk:url().split('/')[2]
         Obj:set(renoteHostCount, userHost, renoteCount + 1)
     }
 
+    logInfo("Completed aggregating renotes by host")
     renoteHostCount
 }
 
 // リノートを集計
 @aggregateNoteRenotes(renotes) {
+    logInfo("Aggregating renotes")
     // ユーザーとリノートを保存するためのオブジェクト
     let userRenoteCount = {}
     let userList = []
@@ -287,6 +292,7 @@ let SERVER_NAME = Mk:url().split('/')[2]
         countList.push(userRenotes.len)
     }
 
+    logInfo(`Aggregated {userList.len} unique renote users`)
     let resultObj = {}
     Obj:set(resultObj, "userRenoteCount", userRenoteCount)
     Obj:set(resultObj, "userList", userList)
@@ -295,6 +301,7 @@ let SERVER_NAME = Mk:url().split('/')[2]
 }
 
 @misskeyNoteReationViewer(note) {
+    logInfo(`==================================================`)
     logInfo(`Viewing reactions and renotes for note ID {note.id}`)
     // ダイアログのリアクション概要テキスト
     let dialogHeaderTextList = []
@@ -450,6 +457,8 @@ let SERVER_NAME = Mk:url().split('/')[2]
 
     logInfo(`Displaying dialog for note ID {note.id}`)
     Mk:dialog(`取得結果` dialogTextMerged)
+    logInfo(`Completed viewing reactions and renotes for note ID {note.id}`)
+    logInfo(`==================================================`)
 }
 
 
